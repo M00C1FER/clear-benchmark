@@ -893,9 +893,12 @@ def _print_summary(data: Dict[str, Any]) -> None:
 
 def _write_html_report(data: Dict[str, Any]) -> None:
     """Write a minimal HTML report to ``clear_benchmark_report.html``."""
+    _tier_labels: Dict[int, str] = {
+        1: "Unit", 2: "Integration", 3: "Performance", 4: "Think-Tank"
+    }
     score = data["composite_score"]
     rows = "".join(
-        f"<tr><td>Tier {k} ({['', '', 'Integration', 'Performance', 'Think-Tank'][int(k)]})</td>"
+        f"<tr><td>Tier {k} ({_tier_labels.get(int(k), f'Tier {k}')})</td>"
         f"<td>{v['passed']}/{v['total']}</td><td>{v['pass_rate']:.0%}</td></tr>"
         for k, v in data["tiers"].items()
     )

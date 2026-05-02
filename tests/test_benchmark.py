@@ -158,11 +158,15 @@ def test_plugin_registered_in_tier4():
 
 # ── demo.py runs without error ─────────────────────────────────────────────
 
-def test_demo_script():
-    """examples/demo.py must execute without AttributeError."""
+def test_demo_script(capsys):
+    """examples/demo.py must execute without error and print a score line."""
     import importlib.util
     from pathlib import Path
     demo = Path(__file__).parent.parent / "examples" / "demo.py"
     spec = importlib.util.spec_from_file_location("demo", demo)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # raises on bad attribute access
+    captured = capsys.readouterr()
+    assert "CLEAR composite score" in captured.out, (
+        "demo.py should print a CLEAR composite score line"
+    )

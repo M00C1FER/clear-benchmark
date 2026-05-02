@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "clear-benchmark"
+version = "1.0.0"
+description = "CLEAR composite performance benchmark suite for AI agent systems — Cost, Latency, Efficiency, Assurance, Reliability in a single score."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0", "rich>=13.0", "psutil>=5.9"]
+
+[project.scripts]
+clear-bench = "clear_benchmark.benchmark:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov"]
+full = ["psutil>=5.9", "sqlite-utils>=3.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

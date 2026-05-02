@@ -1,51 +1,34 @@
-import logging
 """
-NEXUS Core — Unified Benchmark System
+CLEAR Benchmark — Unified Benchmark System
 
-3-tier operational evaluation framework for the NEXUS hybrid multi-agent system:
+4-tier operational evaluation framework for AI agent systems:
 
-  Tier 2: Integration Benchmarks — module imports, agent registry, governance config
+  Tier 1: Unit Tests (pytest)
+  Tier 2: Integration Benchmarks — plugin-based, module imports, registry
   Tier 3: Performance Benchmarks — CLEAR metrics (Cost, Latency, Efficiency, Assurance, Reliability)
   Tier 4: Think-Tank Benchmarks — deliberation quality, consensus convergence
 
-NOTE: Tier 1 (pytest unit tests) exists for development validation only. It is NOT
-part of the operational benchmark. The 600+ dev tests cover framework internals
-(normalizers, scorers, edge cases) which validate code correctness during development
-but do NOT measure NEXUS operational capability or stability.
-
-The operational benchmark (Tiers 2-4, ~16 tests) is the CONSISTENT metric reported
-for system health. It tests actual NEXUS capabilities: import chains, agent routing,
-resource monitoring, quality scoring, consensus building, and think-tank phases.
-
-Inspired by:
-  - CLEAR metrics (MAS evaluation standard)
-  - GEMMAS (EMNLP 2025, graph-based MAS analysis)
-  - MAS-Bench (arXiv:2509.06477)
-  - Microsoft Multi-Agent Reference Architecture
+CLEAR composite weights: Cost(0.15) + Latency(0.20) + Efficiency(0.25)
+                        + Assurance(0.25) + Reliability(0.15)
 
 Usage:
-  nexus --benchmark [--tier 1|2|3|4|all] [--html] [--json]
-  python -m benchmark
+  clear-bench [--tier 1|2|3|4] [--html] [--json] [--no-persist] [--version]
+  python -m clear_benchmark
 """
 
+import argparse
 import hashlib
 import json
+import logging
+import math
 import os
 import sqlite3
 import subprocess
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
-
-
-# ═══════════════════════════════════════════════════════════════
-# CLEAR METRICS — Cost, Latency, Efficiency, Assurance, Reliability
-# ═══════════════════════════════════════════════════════════════
-
-
-
-from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional
 
 
 class BenchmarkPlugin(ABC):
@@ -106,21 +89,32 @@ class CLEARMetrics:
     reliability_recovery_count: int = 0
 
     def score(self) -> float:
-        """Composite score (0.0-1.0) weighted across CLEAR dimensions."""
-        weights = {"C": 0.15, "L": 0.20, "E": 0.25, "A": 0.25, "R": 0.15}
+        """Composite score (0.0–1.0) weighted across CLEAR dimensions.
 
+        Weights: Cost(0.15) + Latency(0.20) + Efficiency(0.25)
+                 + Assurance(0.25) + Reliability(0.15) = 1.00
+
+        Any dimension that is NaN is excluded and remaining weights
+        are re-normalised so the result stays in [0.0, 1.0].
+        """
         # Normalize each dimension to 0-1 (lower cost/latency = better)
-        c = max(0, 1.0 - (self.cost_cpu_ms / 30000))  # 30s budget
-        l = max(0, 1.0 - (self.latency_total_sec / 60))  # 60s budget
-        e = min(1.0, self.efficiency_useful_ratio)
-        a = self.assurance_confidence
-        r = self.reliability_success_rate
+        raw: Dict[str, float] = {
+            "C": max(0.0, 1.0 - (self.cost_cpu_ms / 30000)),  # 30 s budget
+            "L": max(0.0, 1.0 - (self.latency_total_sec / 60)),  # 60 s budget
+            "E": min(1.0, max(0.0, self.efficiency_useful_ratio)),
+            "A": min(1.0, max(0.0, self.assurance_confidence)),
+            "R": min(1.0, max(0.0, self.reliability_success_rate)),
+        }
+        weights: Dict[str, float] = {"C": 0.15, "L": 0.20, "E": 0.25, "A": 0.25, "R": 0.15}
 
-        return (
-            weights["C"] * c + weights["L"] * l +
-            weights["E"] * e + weights["A"] * a +
-            weights["R"] * r
-        )
+        # Drop axes where the normalised value is NaN (missing/uninitialised)
+        valid = {k: v for k, v in raw.items() if not math.isnan(v)}
+        if not valid:
+            return 0.0
+        total_weight = sum(weights[k] for k in valid)
+        if total_weight == 0.0:
+            return 0.0
+        return sum(weights[k] * valid[k] for k in valid) / total_weight
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -536,7 +530,7 @@ class BenchmarkRunner:
                 details={"avg_ms": avg_ms, "iterations": iterations},
                 clear_metrics=CLEARMetrics(
                     latency_total_sec=elapsed / 1000,
-                    efficiency_tokens_per_dollar=iterations / max(elapsed, 0.001),
+                    efficiency_output_per_sec=iterations / max(elapsed / 1000, 0.001),
                     reliability_success_rate=1.0,
                     assurance_confidence=1.0,
                 ),
@@ -627,7 +621,9 @@ class BenchmarkRunner:
                 ))
         for plugin in self._plugins:
             try:
-                results.extend(plugin.run_tier4(self))
+                r = plugin.run(tier=4)
+                if r:
+                    results.extend(r if isinstance(r, list) else [r])
             except Exception as exc:
                 self.logger.warning(f"Plugin tier4 error: {exc}")
         self.suite.results.extend(results)
@@ -727,12 +723,11 @@ class BenchmarkRunner:
             tier_results[n] = TierResult(passed=passed, total=len(results))
             all_results.extend(results)
 
-        # CLEAR composite: simple average of per-result CLEAR scores
+        # CLEAR composite: average of per-result CLEAR scores
+        # Uses CLEARMetrics.score() which applies the documented weights:
+        # Cost(0.15) + Latency(0.20) + Efficiency(0.25) + Assurance(0.25) + Reliability(0.15)
         clear_scores = [
-            (r.clear_metrics.latency_total_sec < 1.0) * 0.20
-            + r.clear_metrics.reliability_success_rate * 0.15
-            + r.clear_metrics.assurance_confidence * 0.25
-            + (r.passed * 0.40)
+            r.clear_metrics.score()
             for r in all_results
             if r.clear_metrics is not None
         ]
@@ -800,3 +795,127 @@ class RunAllResult:
     def __post_init__(self) -> None:
         if self.tier_results is None:
             self.tier_results = {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# CLI ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
+
+_VERSION = "1.0.0"
+
+
+def main(argv: "Optional[List[str]]" = None) -> None:
+    """CLI entry point for ``clear-bench``."""
+    parser = argparse.ArgumentParser(
+        prog="clear-bench",
+        description="CLEAR Benchmark — AI agent composite performance scoring",
+    )
+    parser.add_argument(
+        "--tier", type=int, choices=[1, 2, 3, 4],
+        help="Run a single tier instead of all tiers (2–4)",
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true",
+        help="Output results as JSON (suitable for CI parsing)",
+    )
+    parser.add_argument(
+        "--html", dest="output_html", action="store_true",
+        help="Write an HTML report to clear_benchmark_report.html",
+    )
+    parser.add_argument(
+        "--no-persist", dest="no_persist", action="store_true",
+        help="Skip saving results to the SQLite database",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"clear-bench {_VERSION}",
+    )
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.WARNING)
+    runner = BenchmarkRunner(db_path=":memory:" if args.no_persist else None)
+
+    if args.tier:
+        result = runner.run_tier(args.tier)
+        data: Dict[str, Any] = {
+            "tier": args.tier,
+            "passed": result.passed,
+            "total": result.total,
+            "pass_rate": round(result.pass_rate, 4),
+        }
+        if args.output_json:
+            print(json.dumps(data, indent=2))
+        else:
+            status = "PASS" if result.passed == result.total else "FAIL"
+            print(f"Tier {args.tier}: {result.passed}/{result.total} passed  [{status}]")
+        return
+
+    # Run all tiers (2–4)
+    result_all = runner.run_all()
+    data_all: Dict[str, Any] = {
+        "version": _VERSION,
+        "composite_score": result_all.composite_score,
+        "total_tests": result_all.total_tests,
+        "tiers": {
+            str(n): {"passed": tr.passed, "total": tr.total,
+                     "pass_rate": round(tr.pass_rate, 4)}
+            for n, tr in result_all.tier_results.items()
+        },
+    }
+
+    if args.output_json:
+        print(json.dumps(data_all, indent=2))
+    else:
+        _print_summary(data_all)
+
+    if args.output_html:
+        _write_html_report(data_all)
+
+
+def _print_summary(data: Dict[str, Any]) -> None:
+    """Print a human-readable CLEAR benchmark summary."""
+    score = data["composite_score"]
+    bar_len = int(score * 40)
+    bar = "█" * bar_len + "░" * (40 - bar_len)
+    print(f"\nCLEAR Benchmark  v{data['version']}")
+    print(f"Composite score : {score:.3f}  [{bar}]")
+    print(f"Total tests     : {data['total_tests']}")
+    print()
+    tier_labels = {2: "Integration", 3: "Performance", 4: "Think-Tank"}
+    for tier_str, tr in data["tiers"].items():
+        n = int(tier_str)
+        label = tier_labels.get(n, f"Tier {n}")
+        status = "✓" if tr["passed"] == tr["total"] else "✗"
+        print(f"  {status} Tier {n} ({label}): "
+              f"{tr['passed']}/{tr['total']} — "
+              f"{tr['pass_rate']:.0%} pass rate")
+    print()
+
+
+def _write_html_report(data: Dict[str, Any]) -> None:
+    """Write a minimal HTML report to ``clear_benchmark_report.html``."""
+    _tier_labels: Dict[int, str] = {
+        1: "Unit", 2: "Integration", 3: "Performance", 4: "Think-Tank"
+    }
+    score = data["composite_score"]
+    rows = "".join(
+        f"<tr><td>Tier {k} ({_tier_labels.get(int(k), f'Tier {k}')})</td>"
+        f"<td>{v['passed']}/{v['total']}</td><td>{v['pass_rate']:.0%}</td></tr>"
+        for k, v in data["tiers"].items()
+    )
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>CLEAR Benchmark Report</title>
+<style>body{{font-family:sans-serif;max-width:720px;margin:2em auto}}
+table{{border-collapse:collapse;width:100%}}
+th,td{{border:1px solid #ccc;padding:.5em 1em;text-align:left}}
+th{{background:#f4f4f4}}</style></head>
+<body>
+<h1>CLEAR Benchmark Report</h1>
+<p>Version: {data['version']} — Composite score: <strong>{score:.3f}</strong></p>
+<table><tr><th>Tier</th><th>Passed/Total</th><th>Pass rate</th></tr>
+{rows}
+</table>
+</body></html>"""
+    out = Path("clear_benchmark_report.html")
+    out.write_text(html, encoding="utf-8")
+    print(f"HTML report written to {out.resolve()}")

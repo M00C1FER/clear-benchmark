@@ -2,16 +2,18 @@
 __version__ = "1.0.0"
 
 from clear_benchmark.benchmark import (
-    BenchmarkRunner,
+    BenchmarkPlugin,
     BenchmarkResult,
+    BenchmarkRunner,
     CLEARMetrics,
     RunAllResult,
     TierResult,
 )
 
 __all__ = [
-    "BenchmarkRunner",
+    "BenchmarkPlugin",
     "BenchmarkResult",
+    "BenchmarkRunner",
     "CLEARMetrics",
     "RunAllResult",
     "TierResult",

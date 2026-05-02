@@ -39,7 +39,10 @@ clear-bench --html   # HTML report
 
 | Platform | Method |
 |----------|--------|
-| Linux / WSL | `bash install.sh` |
+| Debian / Ubuntu / WSL | `bash install.sh` (uses apt-get) |
+| Arch / Manjaro | `bash install.sh` (uses pacman) |
+| Fedora / RHEL / Rocky | `bash install.sh` (uses dnf) |
+| Alpine | `bash install.sh` (uses apk; best-effort) |
 | Termux (Android) | `bash install.sh` (no sudo) |
 | pip | `pip install .` |
 
@@ -58,18 +61,25 @@ from clear_benchmark import BenchmarkRunner, BenchmarkPlugin
 runner = BenchmarkRunner()
 results = runner.run_all()
 print(f"CLEAR score: {results.composite_score:.3f}")
-print(f"Tier 3 pass rate: {results.tier3.pass_rate:.1%}")
+print(f"Tier 3 pass rate: {results.tier_results[3].pass_rate:.1%}")
 
 # Write a custom benchmark plugin
 class MyLatencyPlugin(BenchmarkPlugin):
-    name = "my_api_latency"
-    tier = 3
 
-    def run(self) -> dict:
+    @property
+    def name(self) -> str:
+        return "my_api_latency"
+
+    def run(self, tier: int) -> list:
         import time
         start = time.perf_counter()
         # ... call your API ...
-        return {"latency_ms": (time.perf_counter() - start) * 1000}
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        from clear_benchmark import BenchmarkResult
+        return [BenchmarkResult(
+            name=self.name, tier=tier,
+            duration_ms=elapsed_ms, passed=elapsed_ms < 2000,
+        )]
 
 runner.register_plugin(MyLatencyPlugin())
 results = runner.run_tier(3)
@@ -91,7 +101,7 @@ clear-benchmark/
 
 ## Results Persistence
 
-All runs saved to SQLite (default: `~/.local/share/clear-benchmark/benchmarks.db`):
+All runs saved to SQLite (default: `~/.clear-benchmark/data/benchmarks.db`, override with `CLEAR_BENCHMARK_DB`):
 
 ```sql
 SELECT run_date, composite_score, tier3_latency_p50_ms
@@ -101,9 +111,10 @@ ORDER BY run_date DESC LIMIT 10;
 
 ## Cross-Platform Notes
 
-- **Linux/WSL:** `psutil` resource monitoring fully supported
-- **Termux:** `psutil` supported; battery metrics available
-- **CI:** `clear-bench --json` + `--no-persist` for ephemeral runs
+- **Linux (Debian/Ubuntu/Arch/Fedora/Alpine):** `psutil` resource monitoring fully supported; `install.sh` auto-detects `apt-get`, `dnf`, `pacman`, and `apk`
+- **WSL2 (Ubuntu base):** Identical to Linux; no `/sys/firmware/efi` assumptions made
+- **Termux (Android arm64):** `psutil` supported; `install.sh` uses `pkg` (no sudo); `getloadavg` falls back gracefully
+- **CI:** `clear-bench --json --no-persist` for ephemeral runs
 
 ## License
 

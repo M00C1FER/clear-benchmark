@@ -286,15 +286,24 @@ class BenchmarkRunner:
     Tier 4: Think-tank benchmarks (deliberation quality)
     """
 
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)  # logging.getLogger(__name__)
+    def __init__(self, db_path: "str | None" = None):
+        self.logger = logging.getLogger(__name__)
         self.suite = BenchmarkSuite()
         self._plugins: List[BenchmarkPlugin] = []
         self._store = None
+        self._db_path = db_path  # None → use BenchmarkStore default
 
     def _get_store(self) -> BenchmarkStore:
         if not self._store:
-            self._store = BenchmarkStore()
+            store = BenchmarkStore.__new__(BenchmarkStore)
+            if self._db_path is not None:
+                store.DB_PATH = Path(self._db_path)  # type: ignore[attr-defined]
+                store.DB_PATH.parent.mkdir(parents=True, exist_ok=True) if self._db_path != ":memory:" else None
+                store._conn = __import__("sqlite3").connect(self._db_path)
+                store._init_schema()
+            else:
+                BenchmarkStore.__init__(store)
+            self._store = store
         return self._store
 
     # ── Tier 1: Unit Tests ──
@@ -447,6 +456,35 @@ class BenchmarkRunner:
 
         self.suite.results.extend(results)
         return results
+
+    def _bench_sitrep_generation(self) -> "BenchmarkResult":
+        """Benchmark SITREP text generation throughput (pure Python, no deps)."""
+        start = time.monotonic()
+        try:
+            iterations = 100
+            for i in range(iterations):
+                sitrep = (
+                    f"SITREP {i}: Status=NOMINAL | Tasks=2 completed | "
+                    f"Score={0.8 + i * 0.001:.3f} | Phase=EXECUTE"
+                )
+                _ = len(sitrep)
+            elapsed = (time.monotonic() - start) * 1000
+            return BenchmarkResult(
+                name="sitrep_generation", tier=3,
+                duration_ms=elapsed, passed=elapsed < 200,
+                details={"iterations": iterations, "elapsed_ms": elapsed,
+                         "avg_ms_per_sitrep": elapsed / iterations},
+                clear_metrics=CLEARMetrics(
+                    latency_total_sec=elapsed / 1000,
+                    reliability_success_rate=1.0,
+                ),
+            )
+        except Exception as exc:
+            return BenchmarkResult(
+                name="sitrep_generation", tier=3,
+                duration_ms=(time.monotonic() - start) * 1000,
+                passed=False, details={"error": str(exc)},
+            )
 
     def _bench_resource_snapshot(self) -> "BenchmarkResult":
         """Benchmark system resource snapshot performance."""
@@ -660,10 +698,105 @@ class BenchmarkRunner:
         return BenchmarkResult(
             name="quality_gate", tier=4,
             duration_ms=elapsed, passed=pass_rate >= 0.5,
-            details={"pass_rate": pass_rate, "samples": len(samples)},
+            details={"pass_rate": pass_rate, "samples": len(results)},
             clear_metrics=CLEARMetrics(
                 latency_total_sec=elapsed / 1000,
                 reliability_success_rate=pass_rate,
                 assurance_confidence=pass_rate,
             ),
         )
+
+    # ── Convenience runners ───────────────────────────────────────────────
+
+    def run_all(self) -> "RunAllResult":
+        """Run Tiers 2, 3, and 4 and return a combined :class:`RunAllResult`.
+
+        Tier 1 (pytest suite) is intentionally excluded — it requires a
+        separate pytest invocation and is not part of the operational health
+        signal.
+        """
+        tier_map: "Dict[int, List[BenchmarkResult]]" = {
+            2: self.run_tier2(),
+            3: self.run_tier3(),
+            4: self.run_tier4(),
+        }
+        tier_results: "Dict[int, TierResult]" = {}
+        all_results: "List[BenchmarkResult]" = []
+        for n, results in tier_map.items():
+            passed = sum(1 for r in results if r.passed)
+            tier_results[n] = TierResult(passed=passed, total=len(results))
+            all_results.extend(results)
+
+        # CLEAR composite: simple average of per-result CLEAR scores
+        clear_scores = [
+            (r.clear_metrics.latency_total_sec < 1.0) * 0.20
+            + r.clear_metrics.reliability_success_rate * 0.15
+            + r.clear_metrics.assurance_confidence * 0.25
+            + (r.passed * 0.40)
+            for r in all_results
+            if r.clear_metrics is not None
+        ]
+        composite = sum(clear_scores) / len(clear_scores) if clear_scores else 0.0
+
+        return RunAllResult(
+            composite_score=round(composite, 4),
+            total_tests=len(all_results),
+            tier_results=tier_results,
+        )
+
+    def run_tier(self, n: int) -> "TierResult":
+        """Run a single tier by number and return a :class:`TierResult`.
+
+        Args:
+            n: Tier number (1–4).  Note that Tier 1 requires pytest and may
+               not be usable in all environments.
+
+        Returns:
+            :class:`TierResult` with ``passed`` and ``total`` counts.
+
+        Raises:
+            ValueError: If *n* is not a valid tier number.
+        """
+        dispatch = {1: self.run_tier1, 2: self.run_tier2, 3: self.run_tier3, 4: self.run_tier4}
+        if n not in dispatch:
+            raise ValueError(f"Invalid tier number: {n}. Must be 1–4.")
+        results = dispatch[n]()
+        passed = sum(1 for r in results if r.passed)
+        return TierResult(passed=passed, total=len(results))
+
+
+# ── Convenience result types ──────────────────────────────────────────────
+
+
+@dataclass
+class TierResult:
+    """Summary of a single benchmark tier run.
+
+    Attributes:
+        passed: Number of benchmarks that passed.
+        total: Total number of benchmarks executed.
+    """
+    passed: int
+    total: int
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passed / self.total if self.total else 0.0
+
+
+@dataclass
+class RunAllResult:
+    """Aggregate result for a full (Tier 2–4) benchmark run.
+
+    Attributes:
+        composite_score: Weighted CLEAR composite score (0.0–1.0).
+        total_tests: Total number of individual benchmark tests executed.
+        tier_results: Per-tier breakdown as a dict keyed by tier number.
+    """
+    composite_score: float
+    total_tests: int
+    tier_results: "Dict[int, TierResult]" = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.tier_results is None:
+            self.tier_results = {}

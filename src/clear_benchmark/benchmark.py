@@ -1,4 +1,4 @@
-CLEAR Benchmark — Unified Benchmark System
+"""CLEAR Benchmark — Unified Benchmark System
 
 4-tier operational evaluation framework for AI agent systems:
 

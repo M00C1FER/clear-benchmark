@@ -1,4 +1,3 @@
-"""
 CLEAR Benchmark — Unified Benchmark System
 
 4-tier operational evaluation framework for AI agent systems:
@@ -196,6 +195,7 @@ class BenchmarkStore:
         self._init_schema()
 
     def _init_schema(self):
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS benchmark_runs (
                 run_id TEXT PRIMARY KEY,

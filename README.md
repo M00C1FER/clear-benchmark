@@ -1,10 +1,24 @@
 # CLEAR Benchmark
 
-> Composite AI agent performance scoring: Cost, Latency, Efficiency, Assurance, Reliability — in one reproducible benchmark suite.
+> Composite scoring across five existing benchmark axes — Cost, Latency, Efficiency, Assurance, Reliability — under a single reproducible 4-tier test architecture, persisted to SQLite, plugin-extensible.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL%20%7C%20Termux-lightgrey)](install.sh)
+
+## What's actually new here, what isn't
+
+The five axes of CLEAR are **not new**. Each maps to a layer that already has dominant public benchmarks — HELM, Artificial Analysis, LMSys Arena, TruthfulQA, Vectara HHEM — which CLEAR composes rather than replaces. The contribution is **the 4-tier pluggable test architecture and the composite scoring**, not the dimensions themselves.
+
+| CLEAR axis | What it measures | Established benchmarks the axis maps to |
+|---|---|---|
+| **Cost** | Token / API cost per operation | OpenRouter cost-per-task tables; Helicone / Langsmith spend dashboards |
+| **Latency** | p50/p95 response time, time-to-first-token | [Artificial Analysis](https://artificialanalysis.ai) latency tables |
+| **Efficiency** | Quality-per-token, quality-per-dollar | LMSys Chatbot Arena (cost-normalized leaderboards); [HELM](https://crfm.stanford.edu/helm/) efficiency |
+| **Assurance** | Hallucination resistance, factual correctness | [TruthfulQA](https://github.com/sylinrl/TruthfulQA), [Vectara HHEM](https://huggingface.co/vectara/hallucination_evaluation_model) |
+| **Reliability** | Run-to-run consistency / variance | Less-served by existing benchmarks; CLEAR's main own contribution |
+
+Reliability is the axis the public ecosystem under-serves — most leaderboards report single-run scores. CLEAR weights it 0.15 in the composite and treats run-to-run variance as a first-class metric.
 
 ## What It Does
 

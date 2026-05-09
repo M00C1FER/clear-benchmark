@@ -16,7 +16,7 @@ The five axes of CLEAR are **not new**. Each maps to a layer that already has do
 | **Latency** | p50/p95 response time, time-to-first-token | [Artificial Analysis](https://artificialanalysis.ai) latency tables |
 | **Efficiency** | Quality-per-token, quality-per-dollar | LMSys Chatbot Arena (cost-normalized leaderboards); [HELM](https://crfm.stanford.edu/helm/) efficiency |
 | **Assurance** | Hallucination resistance, factual correctness | [TruthfulQA](https://github.com/sylinrl/TruthfulQA), [Vectara HHEM](https://huggingface.co/vectara/hallucination_evaluation_model) |
-| **Reliability** | Run-to-run consistency / variance | Less-served by existing benchmarks; CLEAR's main own contribution |
+| **Reliability** | Run-to-run consistency / variance | Less-served by existing benchmarks; CLEAR's main contribution |
 
 Reliability is the axis the public ecosystem under-serves — most leaderboards report single-run scores. CLEAR weights it 0.15 in the composite and treats run-to-run variance as a first-class metric.
 
